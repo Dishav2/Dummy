@@ -10,52 +10,64 @@ from django.contrib.auth.forms import UserCreationForm
 from .decorators import allowed_users
 
 from django.contrib import messages
-from django.urls import reverse_lazy
+from django.urls import reverse_lazy, reverse
 
 # Create your views here.
-from django.http import HttpResponse, request
+from django.http import HttpResponse, request, HttpResponseRedirect
 from django.views.generic import View, TemplateView, ListView, UpdateView
 import csv
 import numpy as np
 import pandas as pd
-from . import plot1
+from . import plot1, plot2_cta
 from .models import *
 from django.template import RequestContext
 from django.core import serializers
 from .forms import Metratr116Form
-from .filters import Metratr116Filter
+from .filters import Metratr116Filter, CtaTableFilter
 
 
 
 def register_login(request):
-    form = UserCreationForm()
-    if "register" in request.method == 'POST':
-        form = UserCreationForm(request.POST) == "Register"
-        if form.is_valid():
-            form.save()
-            user = form.cleaned_data['username']
-            messages.success(request,"Account was Created for " + user)
-        
-    context = {'form':form}
-    return render(request,'login.html',context)
-    
-    if "login" in request.method == "POST":
-        if request.POST['submit'] == 'Login':
+    if request.method=='POST':
+        form = UserCreationForm(request.POST)
+        if request.POST.get('submit') == 'sign_up':
+            print('Register')
+            if form.is_valid():
+                form.save()
+                user = form.cleaned_data['username']
+                print('Account was created',user)
+                messages.success(request,"Account was created for " + user)
+                return render(request,'login.html',{'form':form})
+            else:
+                print('Error', form.errors, request.POST)
+                messages.error(request, 'Invalid form submission!')
+                messages.error(request, form.errors)
+        if request.POST.get('submit') == 'sign_in':
+            print('Login attempt')
             username = request.POST['username']
             password = request.POST['password']
-
             user = authenticate(request, username=username, password=password)
-
             if user is not None:
-                login(request,user)
-                fname = user.first_name
-                return render(request, "dashboard.html", {'fname':fname})
+                if user.is_superuser:
+                    print('success', request.POST)
+                    login(request,user)
+                    fname = user.first_name
+                    return redirect('dashboard')
+                else:
+                    print('ctasuccess', request.POST)
+                    login(request,user)
+                    fname = user.first_name
+                    return redirect('ctadashboard')
             else:
-                messages.error(request, 'Wrong Username or password')
-                return redirect('login')
-    context = {}
+                messages.error(request, 'Wrong Username or Password')
+                return render(request,'login.html',{})
+    else:
+        form = UserCreationForm()
+    context = {'form':form}
     return render(request,'login.html',context)
-            
+        
+
+
 class DashboardPageView(TemplateView): 
     template_name = 'dashboard.html'
     def get_context_data(self, **kwargs):
@@ -123,7 +135,7 @@ def TrainSpecFilterView(request):
     return render(request, 'trainspec.html', context)
     
  
-
+@login_required
 def DBTableView(request):
     #data = DummyTable_20220508.objects.all()
     #data = Backup_Speed.objects.order_by('-v1n', '-v1s', '-v3s', '-v3n')[:20]
@@ -151,22 +163,49 @@ def DBTableView(request):
                 }
     return render(request, 'dbtable.html', locals())
 
-@login_required
-@allowed_users(allowed_roles=['CTA'])
-def testcta(request):    
 
-    context = {}
-    return render(request, 'ctadashboard.html', context)
+class CTADashboard(TemplateView): 
+    template_name = 'ctadashboard.html'
+    def get_context_data(self, **kwargs):
+        # Call the base implementation first to get a context
+        context = super(CTADashboard, self).get_context_data(**kwargs)
+        
+        context['plotcta'] = plot2_cta.cumulative_cta()
+        return context
+
+def TrainSpecCTA(request):
+    all_data = Cta_backup.objects.all()
+    myFilter = CtaTableFilter(request.GET, queryset = all_data)
+    train_data = myFilter.qs
+    context = {'train_data': train_data, 'myFilter' : myFilter}
+    return render(request, 'ctatrainspec.html', context)
 
 
-##Separate users for Metra and CTA - 9/24
 
-def enter_view(request):
-    if request.user.has_perm('app_label.permission_codename'):
-        return redirect('/dashboard')
-    elif request.user.has_perm('app_label.another_permission'):
-        return redirect('/ctadashboard')
-    else:
-        return redirect('/dashboard')
+def CTADBTable(request):
+    
+    all_fields = [field.name for field in Cta_backup._meta.get_fields()[2:3]]
+    
+    datav1e = list(Cta_backup.objects.order_by('-v1e')[:3])
+    datav1w = list(Cta_backup.objects.order_by('-v1w')[:3])
+    datav2e = list(Cta_backup.objects.order_by('-v2e')[:3])
+    datav2w = list(Cta_backup.objects.order_by('-v2w')[:3])
+    datal1e = list(Cta_backup.objects.order_by('-l1e')[:3])
+    datal1w = list(Cta_backup.objects.order_by('-l1w')[:3])
+    datal2e = list(Cta_backup.objects.order_by('-l2e')[:3])
+    datal2w = list(Cta_backup.objects.order_by('-l2w')[:3])
+    context = {
+                'all_fields' : all_fields,
+                'datav1e': datav1e,
+                'datav1w': datav1w,
+                'datav2e': datav2e,
+                'datav2w': datav2w,
+                'datal1e': datal1e,
+                'datal1w': datal1w,
+                'datal2e': datal2e,
+                'datal2w': datal2w,
+                }
+    return render(request, 'ctadbtable.html', locals())
+    
 
 
